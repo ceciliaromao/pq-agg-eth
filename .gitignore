@@ -1,0 +1,39 @@
+# ============================================================
+# Rust / SP1
+# ============================================================
+/target/
+/circuits/**/target/
+/host/**/target/
+**/*.rs.bk
+Cargo.lock
+
+# SP1 build artifacts
+**/elf/
+*.bin
+
+# ============================================================
+# Benchmark outputs grandes (versionar resumos, não dumps brutos)
+# ============================================================
+/bench/raw/
+*.criterion/
+
+# ============================================================
+# Segurança: conteúdo acadêmico que NÃO deve ir para o repo público
+# ============================================================
+# Formatos comuns de export do Google Docs
+*.docx
+*.odt
+
+# PDFs no geral
+*.pdf
+
+# Rascunhos de artigos científicos derivados (antes de submissão)
+docs/drafts/
+
+# ============================================================
+# Sistema / editor
+# ============================================================
+.DS_Store
+.vscode/
+.idea/
+*.swp

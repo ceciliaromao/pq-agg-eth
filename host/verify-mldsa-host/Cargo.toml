@@ -1,0 +1,20 @@
+[package]
+name = "verify-mldsa-host"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sp1-sdk = { version = "6", features = ["blocking"] }
+# defaults do fips204 (default-rng + todas as variantes) ficam ligados aqui:
+# o host roda nativamente e precisa gerar chaves/assinar para montar os casos de teste.
+fips204 = "0.4.6"
+# mesma versão usada internamente por sp1-sdk para (de)serializar SP1ProofWithPublicValues
+bincode = "1.3"
+
+[build-dependencies]
+sp1-build = "6"
+
+[[test]]
+name = "verify_mldsa"
+path = "tests/verify_mldsa.rs"
+harness = true

@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["host/verify-mldsa-host"]
+
+# circuits/verify-mldsa NÃO é membro deste workspace de propósito: compila para o
+# target riscv32im do zkVM SP1, com toolchain própria (ver circuits/verify-mldsa/rust-toolchain.toml).
+# Ele é buildado como um artefato ELF separado pelo build.rs do host (sp1-build).
