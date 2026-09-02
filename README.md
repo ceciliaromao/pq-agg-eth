@@ -25,35 +25,49 @@ SNARK), ainda inexistente para contas de usuário.
 
 ## Status
 
-🚧 Em desenvolvimento — fase de implementação inicial (Milestone M1)
+🚧 Em desenvolvimento — M1 (verificação individual) e M2 (harness de
+benchmark) concluídos. Próximo: M3 (agregação por lote).
 
 ## Decisões técnicas em vigor
 
 - **Modo de prova (M1-M4):** STARK "core"/"compressed" do SP1, sem wrapping
   Groth16/PLONK sobre BN254 — preserva segurança pós-quântica de ponta a
   ponta enquanto nenhum milestone exige verificação on-chain. Decisão
-  reaberta em M5. Detalhes: [`docs/decisions.md`](docs/decisions.md#d1--modo-de-prova-do-sp1-seção-0-da-spec).
+  reaberta em M5.
 - **Referência ML-DSA:** crate Rust pura `no_std`-compatível (ex.: `fips204`),
   não `pqcrypto-dilithium` (inviável no target `riscv32im` do guest SP1 por
-  usar FFI sobre C) nem implementação própria do zero. Detalhes:
-  [`docs/decisions.md`](docs/decisions.md#d2--referência-de-implementação-ml-dsa-seção-7-pergunta-2).
+  usar FFI sobre C) nem implementação própria do zero.
+- **Hardware oficial de benchmark (M1-M4):** Apple M4, 10 cores, 16 GB RAM,
+  macOS 26.5.2. Não se aplica a M5 (custo de gas é definido pelo protocolo,
+  independente de hardware).
 
 ## Estrutura do repositório
 
 ```
-/circuits    # guest programs SP1
-/host        # host programs (geração/orquestração de provas)
-/bench       # scripts e resultados de benchmark
-/contracts   # Solidity (a partir de M5)
-/docs        # spec técnica e log de decisões
+/circuits                       # guest programs SP1
+  verify-mldsa/                 # M1: verificação de 1 assinatura ML-DSA-44
+/host                           # host programs (geração/orquestração de provas)
+  verify-mldsa-host/
+    src/lib.rs                  # geração de casos + prove/verify (M1)
+    src/bin/bench.rs            # harness de benchmark (M2)
+    tests/verify_mldsa.rs       # suite de testes do M1
+/contracts                      # Solidity (a partir de M5)
+/docs
+  results/                      # CSVs de benchmark por milestone (M2+)
 ```
+
+Nota: a spec original (Seção 5) sugeria um `/bench` de topo separado para o
+harness; na prática ele ficou dentro de `host/verify-mldsa-host/src/bin/`
+para reusar a lógica de geração de casos e prove/verify já implementada em
+`lib.rs`, sem precisar de uma dependência de path entre crates.
 
 ## Milestone M1 — verificação de assinatura ML-DSA-44 individual
 
 Guest program SP1 (`circuits/verify-mldsa`) que recebe `(pubkey, message,
 signature)` e só permite gerar prova se a assinatura ML-DSA-44 for válida —
-ver [`docs/decisions.md`](docs/decisions.md) (D2) para a justificativa dessa
-escolha de relação NP. Host program (`host/verify-mldsa-host`) gera os pares
+essa escolha de relação NP é intencional: o objetivo é que a prova só exista
+quando a assinatura de fato verifica, sem revelar um booleano de
+validade/invalidade. Host program (`host/verify-mldsa-host`) gera os pares
 de teste e orquestra proving/verificação.
 
 ### Pré-requisitos
