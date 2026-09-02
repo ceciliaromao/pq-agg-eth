@@ -94,7 +94,7 @@ ML-DSA-44): **~50-70s por caso** — válido (prova + verificação): 67.04s;
 inválido, rejeitado corretamente (prova + rejeição em `verify`): 49.95s.
 Informal por design nesta fase — benchmark reproduzível formal é objetivo do M2.
 
-**Nota de implementação (D2):** no `sp1-sdk` 6.5.0, `prove()` sempre sucede —
+**Nota de implementação:** no `sp1-sdk` 6.5.0, `prove()` sempre sucede —
 a prova STARK atesta o que de fato aconteceu na execução, panic do guest
 incluso. Quem rejeita é `verify(proof, vk, None)`, que por padrão exige
 exit_code de sucesso. Por isso `prove_case` (`host/verify-mldsa-host/src/lib.rs`)
@@ -107,8 +107,7 @@ Binário `host/verify-mldsa-host/src/bin/bench.rs`: roda o **mesmo** par
 (chave, mensagem, assinatura) fixo em N=30 repetições, medindo proving e
 verificação separadamente e o tamanho da prova serializada. Par fixo de
 propósito — isola ruído de medição/sistema da variância entre inputs
-diferentes (ver [`docs/decisions.md`](docs/decisions.md), D3). Hardware
-oficial: Apple M4, 10 cores, 16 GB RAM, macOS 26.5.2 (D3).
+diferentes. Hardware oficial: Apple M4, 10 cores, 16 GB RAM, macOS 26.5.2.
 
 ```bash
 # N=30 x ~70-100s/repetição em modo compressed ≈ 35-50 minutos
