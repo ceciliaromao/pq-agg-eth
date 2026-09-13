@@ -23,11 +23,17 @@
 use fips204::ml_dsa_44::{self};
 use fips204::traits::{KeyGen, SerDes, Signer};
 use sp1_sdk::blocking::{EnvProver, EnvProvingKey, ProveRequest, Prover};
-use sp1_sdk::{include_elf, Elf, ProvingKey, SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey};
+use sp1_sdk::{
+    include_elf, Elf, HashableKey, ProvingKey, SP1Proof, SP1ProofWithPublicValues, SP1Stdin,
+    SP1VerifyingKey,
+};
 use std::time::{Duration, Instant};
 
 /// ELF do guest program `verify-mldsa`, buildado pelo build.rs via sp1-build.
 pub const ELF: Elf = include_elf!("verify-mldsa");
+
+/// ELF do guest program `aggregate-mldsa` (M4), buildado pelo build.rs via sp1-build.
+pub const AGGREGATE_ELF: Elf = include_elf!("aggregate-mldsa");
 
 /// Um caso de teste: chave pública, mensagem e assinatura, todos como bytes brutos
 /// (o formato que o guest espera via `sp1_zkvm::io::read_vec`).
@@ -196,4 +202,78 @@ pub fn bench_case(
     let verification_time = verify_start.elapsed();
 
     Ok(BenchSample { proving_time, verification_time, proof_size_bytes })
+}
+
+/// Uma sub-prova para o Milestone M4 (composição recursiva): uma prova
+/// compressed do guest verify-mldsa (k=1), junto da sua verifying key.
+pub struct SubProof {
+    pub proof: SP1ProofWithPublicValues,
+    pub vk: SP1VerifyingKey,
+}
+
+/// Gera n sub-provas independentes, cada uma verificando uma assinatura
+/// ML-DSA-44 diferente, usando o mesmo guest program e proving key do M1/M3.
+pub fn prove_sub_proofs(client: &EnvProver, sub_proving_key: &EnvProvingKey, n: usize) -> Vec<SubProof> {
+    (0..n)
+        .map(|i| {
+            let message = format!("m4-sub-msg-{i}");
+            let case = valid_case(format!("m4-sub-{i}"), message.as_bytes());
+
+            let mut stdin = SP1Stdin::new();
+            write_batch(&mut stdin, std::slice::from_ref(&case));
+
+            let proof = client
+                .prove(sub_proving_key, stdin)
+                .compressed()
+                .run()
+                .expect("sub-prova do M4 deveria ter sucesso");
+
+            SubProof { proof, vk: sub_proving_key.verifying_key().clone() }
+        })
+        .collect()
+}
+
+/// Faz o setup do guest program agregador (M4).
+pub fn setup_aggregate(client: &EnvProver) -> EnvProvingKey {
+    client.setup(AGGREGATE_ELF).expect("setup do guest program aggregate-mldsa falhou")
+}
+
+/// Compõe n sub-provas já geradas numa única prova recursiva: para cada
+/// sub-prova, escreve o digest da sua verifying key e seus valores
+/// públicos brutos no stdin normal, e a prova em si via
+/// `SP1Stdin::write_proof` (consumida pela syscall de verificação
+/// recursiva dentro do guest agregador, na mesma ordem).
+pub fn aggregate(
+    client: &EnvProver,
+    aggregate_proving_key: &EnvProvingKey,
+    sub_proofs: Vec<SubProof>,
+) -> ProveOutcome {
+    let mut stdin = SP1Stdin::new();
+    stdin.write(&(sub_proofs.len() as u32));
+    for sub in &sub_proofs {
+        stdin.write(&sub.vk.hash_u32());
+        stdin.write_vec(sub.proof.public_values.to_vec());
+    }
+    for sub in sub_proofs {
+        let SP1Proof::Compressed(recursion_proof) = sub.proof.proof else {
+            panic!("sub-prova do M4 não está em modo compressed");
+        };
+        stdin.write_proof(*recursion_proof, sub.vk.vk.clone());
+    }
+
+    let start = Instant::now();
+    let result = client
+        .prove(aggregate_proving_key, stdin)
+        .compressed()
+        .run()
+        .map_err(|e| e.to_string())
+        .and_then(|proof| {
+            client
+                .verify(&proof, aggregate_proving_key.verifying_key(), None)
+                .map(|()| proof)
+                .map_err(|e| e.to_string())
+        });
+    let proving_time = start.elapsed();
+
+    ProveOutcome { result, proving_time }
 }

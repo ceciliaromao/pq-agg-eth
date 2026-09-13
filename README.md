@@ -26,8 +26,8 @@ agregação SNARK), ainda inexistente para contas de usuário.
 ## Status
 
 🚧 Em desenvolvimento. M1 (verificação individual), M2 (harness de
-benchmark) e M3 (agregação por lote) concluídos. Próximo: M4 (composição
-recursiva, opcional) ou M5 (custo de gas on-chain).
+benchmark), M3 (agregação por lote) e M4 (composição recursiva)
+concluídos. Próximo: M5 (custo de gas on-chain).
 
 ## Decisões técnicas em vigor
 
@@ -47,11 +47,13 @@ recursiva, opcional) ou M5 (custo de gas on-chain).
 ```
 /circuits                       # guest programs SP1
   verify-mldsa/                 # M1+M3: verificação de k assinaturas ML-DSA-44 (k=1..N)
+  aggregate-mldsa/              # M4: composição recursiva de n sub-provas
 /host                           # host programs (geração/orquestração de provas)
   verify-mldsa-host/
-    src/lib.rs                  # geração de casos/lotes + prove/verify (M1, M3)
+    src/lib.rs                  # geração de casos/lotes + prove/verify + agregação (M1, M3, M4)
     src/bin/bench.rs            # harness de benchmark k=1 (M2)
     src/bin/bench_m3.rs         # harness de benchmark parametrizado por k (M3)
+    src/bin/bench_m4.rs         # harness comparativo de composição recursiva (M4)
     tests/verify_mldsa.rs       # suite de testes do M1
 /contracts                      # Solidity (a partir de M5)
 /docs
@@ -192,11 +194,81 @@ processo de longa duração, três de processos novos), registradas em
 CSV em vez de sobrescrevê-lo a cada execução, permitindo compor resultados
 de múltiplas invocações sem perder dados de execuções anteriores.
 
-O comportamento assintótico do M3 está documentado: a agregação, do jeito
-como está implementada, escala mal em memória nesta configuração de
-hardware. Rodar k em {8, 16, 32} exigiria mais RAM do que os 16 GB
-disponíveis nesta máquina; ficaria para um hardware com mais memória, caso
-isso seja revisitado.
+O comportamento assintótico do M3 está documentado: a agregação por lote
+monolítico, do jeito como está implementada, escala mal em memória nesta
+configuração de hardware. Rodar k em {8, 16, 32} exigiria mais RAM do que
+os 16 GB disponíveis nesta máquina, a não ser que se troque a abordagem.
+O M4 investiga exatamente essa alternativa.
+
+## Milestone M4: composição recursiva
+
+Alternativa ao batching monolítico do M3: em vez de um único guest
+verificando k assinaturas na mesma execução, cada assinatura é provada
+independentemente (guest `verify-mldsa`, k=1, modo compressed), e um
+segundo guest (`circuits/aggregate-mldsa`) verifica n dessas sub-provas
+dentro da própria execução, produzindo uma prova final que só existe se
+todas as n sub-provas forem válidas.
+
+O mecanismo usa a verificação recursiva de provas do SP1: o host gera cada
+sub-prova em modo compressed (obrigatório, é o único modo que pode ser
+verificado recursivamente), e passa cada uma para o guest agregador via
+`SP1Stdin::write_proof`, junto do digest da sua verifying key
+(`HashableKey::hash_u32`) e dos seus valores públicos brutos. Dentro do
+guest agregador, `sp1_zkvm::lib::verify::verify_sp1_proof(vk_digest,
+pv_digest)` verifica cada sub-prova, recebendo o conteúdo da prova em si
+automaticamente (casado por ordem de chamada com o que foi escrito via
+`write_proof`), sem precisar lê-la explicitamente como entrada. O
+`pv_digest` é o SHA-256 dos valores públicos brutos, calculado pelo
+próprio guest agregador.
+
+```bash
+# cargo run --release -p verify-mldsa-host --bin bench_m4 -- <n>
+cargo run --release -p verify-mldsa-host --bin bench_m4 -- 8
+```
+
+### Resultados (Apple M4, 16 GB RAM, 13/09/2026, uma execução por n)
+
+| n | Sub-provas (tempo total) | Agregação (tempo) | Tamanho da prova agregada | Tempo total |
+| --- | --- | --- | --- | --- |
+| 2 | 131,00 s | 88,65 s | 1.275.217 B | 219,64 s |
+| 8 | 525,65 s | 196,57 s | 1.283.161 B | 722,22 s |
+| 16 | 1.084,65 s | 382,74 s | 1.293.759 B | 1.467,39 s |
+| 32 | 1.944,74 s | 688,43 s | 1.314.959 B | 2.633,17 s |
+
+Dados em [`docs/results/m4_benchmark.csv`](docs/results/m4_benchmark.csv).
+
+### Achados
+
+A composição recursiva completou n=32 sem falha de memória, o valor mais
+alto que a spec original previa e que o M3 não conseguiu alcançar (M3
+falhou em k=8). Isso confirma a hipótese que motivou o M4: como cada
+sub-prova é gerada num processo independente com footprint de memória
+fixo (equivalente ao k=1 do M3), a etapa de agregação em si opera sobre
+provas já comprimidas e de tamanho pequeno, não sobre o traço de execução
+bruto de n verificações ML-DSA simultâneas. O teto de memória do M3 é uma
+limitação do batching monolítico, não da agregação em si.
+
+O tamanho da prova final cresce muito pouco com n (de 1.275.217 B em n=2
+para 1.314.959 B em n=32, cerca de 40 B por assinatura adicional
+agregada), reforçando a propriedade de tamanho quase constante já
+observada no M2 e no M3. O tempo da etapa de agregação cresce de forma
+aproximadamente linear com n (de 88,65 s em n=2 a 688,43 s em n=32, uma
+taxa marginal estável de 19 a 23 s por sub-prova adicional), um
+comportamento bem mais previsível que o crescimento super-linear do
+proving monolítico observado no M3.
+
+O custo é tempo total de parede: para o mesmo n, a soma de n provas
+independentes mais a agregação é significativamente maior que o batching
+monolítico equivalente (quando este último não esbarra no limite de
+memória). Em compensação, a geração das n sub-provas é independente por
+natureza: pode ser paralelizada entre processos ou máquinas diferentes,
+o que o batching monolítico do M3 não permite.
+
+Resultados de uma única execução por valor de n, dado o custo de tempo
+(quase 44 minutos só para n=32). Consistente com o critério de sucesso do
+M4: resultado comparativo documentado, neste caso favorável à composição
+recursiva como forma de contornar o limite de memória do M3, ao custo de
+mais tempo total de execução.
 
 ## Licença
 
