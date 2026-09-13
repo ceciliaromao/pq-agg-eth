@@ -1,8 +1,8 @@
-//! Demo do pipeline do M1: gera um par válido e um inválido, prova+verifica
-//! cada um (rejeição acontece em verify, não em prove — ver nota de API em
-//! src/lib.rs), e reporta o tempo observado. Não é o harness de benchmark
-//! formal (isso é M2) — só uma checagem manual rápida de que o pipeline
-//! guest+host está funcionando.
+//! Demo do pipeline do M1: gera um par válido e um inválido, prova e
+//! verifica cada um (a rejeição acontece em verify, não em prove; ver
+//! comentário em src/lib.rs), e reporta o tempo observado. Não é o harness
+//! de benchmark formal (isso é o M2), só uma checagem manual rápida de que
+//! o pipeline guest+host está funcionando.
 //!
 //! Rodar com: cargo run --release -p verify-mldsa-host
 
@@ -14,7 +14,7 @@ fn main() {
     let proving_key = setup(&client);
 
     let valid = valid_case("demo-valida", b"mensagem de teste M1");
-    let outcome = prove_case(&client, &proving_key, &valid);
+    let outcome = prove_case(&client, &proving_key, std::slice::from_ref(&valid));
     match outcome.result {
         Ok(_) => println!(
             "[{}] prova gerada e verificada em {:.2?}",
@@ -24,7 +24,7 @@ fn main() {
     }
 
     let invalid = case_tampered_signature("demo-invalida", b"mensagem de teste M1");
-    let outcome = prove_case(&client, &proving_key, &invalid);
+    let outcome = prove_case(&client, &proving_key, std::slice::from_ref(&invalid));
     match outcome.result {
         Ok(_) => panic!("caso inválido não deveria passar na verificação, mas passou"),
         Err(e) => println!(

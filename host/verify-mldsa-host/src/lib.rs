@@ -1,25 +1,24 @@
-//! Host program — Milestone M1.
+//! Host program para os Milestones M1 (k=1) e M3 (k>1, agregação por lote).
 //!
-//! Gera pares (chave pública, mensagem, assinatura) ML-DSA-44 — válidos e
-//! inválidos — e roda cada um pelo guest program `verify-mldsa` via SP1,
-//! usando o modo de prova STARK "compressed" (ver docs/decisions.md, D1).
+//! Gera pares (chave pública, mensagem, assinatura) ML-DSA-44, válidos e
+//! inválidos, individuais ou em lote, e roda cada lote pelo guest program
+//! `verify-mldsa` via SP1, usando o modo de prova STARK "compressed" (sem
+//! wrapping para Groth16/PLONK, ver README).
 //!
-//! API do sp1-sdk 6.5.0 (blocking, feature `blocking`) — conferida lendo o
-//! source vendorizado da crate, não só docs: `EnvProver::setup(elf: Elf)`
-//! retorna só a proving key (`EnvProvingKey`), não um par (pk, vk); a
-//! verifying key vem de `proving_key.verifying_key()` via o trait
-//! `ProvingKey`. `Elf` é um tipo próprio (`include_elf!` retorna `Elf`, não
-//! `&[u8]`).
+//! Notas sobre a API do sp1-sdk 6.5.0 (feature `blocking`):
 //!
-//! Descoberta empírica importante (via `cargo run`, não só leitura): `prove()`
-//! SEMPRE sucede em `SP1` 6.5.0, mesmo quando o guest dá panic (`assert!`
-//! falho) — a prova STARK simplesmente atesta "o programa rodou e terminou
-//! com exit_code X", panic incluso. Quem de fato rejeita é `verify(proof, vk,
-//! None)`: com `status_code: None`, `verify_proof` (sp1-sdk `src/prover.rs`)
-//! usa `StatusCode::SUCCESS` como default e retorna
-//! `Err(UnexpectedExitCode)` se o exit_code commitado não for de sucesso.
-//! Por isso `prove_case` abaixo encadeia prove+verify — a relação NP do M1
-//! (D2) só "aceita" um caso quando as duas etapas sucedem.
+//! `EnvProver::setup(elf: Elf)` retorna só a proving key (`EnvProvingKey`).
+//! A verifying key vem de `proving_key.verifying_key()`, do trait
+//! `ProvingKey`. `Elf` é um tipo próprio; `include_elf!` retorna `Elf`, não
+//! `&[u8]`.
+//!
+//! `prove()` sempre retorna `Ok`, mesmo quando o guest dá panic: a prova
+//! STARK atesta que o programa rodou e terminou com um dado exit_code,
+//! panic incluso. A rejeição acontece em `verify(proof, vk, None)`: com
+//! `status_code: None`, a verificação usa `StatusCode::SUCCESS` como padrão
+//! e retorna `Err(UnexpectedExitCode)` se o exit_code não indicar sucesso.
+//! Por isso `prove_case` encadeia prove e verify: a relação NP só aceita um
+//! lote quando as duas etapas sucedem para todos os seus casos.
 
 use fips204::ml_dsa_44::{self};
 use fips204::traits::{KeyGen, SerDes, Signer};
@@ -33,18 +32,19 @@ pub const ELF: Elf = include_elf!("verify-mldsa");
 /// Um caso de teste: chave pública, mensagem e assinatura, todos como bytes brutos
 /// (o formato que o guest espera via `sp1_zkvm::io::read_vec`).
 pub struct MlDsaCase {
-    pub label: &'static str,
+    pub label: String,
     pub pk_bytes: Vec<u8>,
     pub message: Vec<u8>,
     pub sig_bytes: Vec<u8>,
-    /// Se `false`, espera-se que a geração de prova falhe (ver docs/decisions.md, D2).
+    /// Se `false`, espera-se que a geração de prova falhe (a assinatura em
+    /// questão faz o lote inteiro ser rejeitado em `verify`).
     pub expected_valid: bool,
 }
 
 fn keygen_and_sign(message: &[u8]) -> (Vec<u8>, Vec<u8>) {
-    // KG::try_keygen (não ml_dsa_44::try_keygen direto) e a assinatura já
-    // sai como [u8; SIG_LEN] — o associated type `Signature` do trait
-    // `Signer` É o array bruto nesta crate, sem SerDes (ver circuits/verify-mldsa/src/main.rs).
+    // KG::try_keygen (não ml_dsa_44::try_keygen direto). A assinatura já sai
+    // como [u8; SIG_LEN]: o associated type Signature do trait Signer é o
+    // array bruto nesta crate, sem SerDes.
     let (pk, sk) = ml_dsa_44::KG::try_keygen().expect("keygen ML-DSA-44 falhou");
     let sig: [u8; ml_dsa_44::SIG_LEN] =
         sk.try_sign(message, &[]).expect("assinatura ML-DSA-44 falhou");
@@ -52,10 +52,10 @@ fn keygen_and_sign(message: &[u8]) -> (Vec<u8>, Vec<u8>) {
 }
 
 /// Caso positivo: assinatura genuína sobre `message`.
-pub fn valid_case(label: &'static str, message: &[u8]) -> MlDsaCase {
+pub fn valid_case(label: impl Into<String>, message: &[u8]) -> MlDsaCase {
     let (pk_bytes, sig_bytes) = keygen_and_sign(message);
     MlDsaCase {
-        label,
+        label: label.into(),
         pk_bytes,
         message: message.to_vec(),
         sig_bytes,
@@ -64,7 +64,7 @@ pub fn valid_case(label: &'static str, message: &[u8]) -> MlDsaCase {
 }
 
 /// Caso negativo: um byte da assinatura é invertido após uma assinatura genuína.
-pub fn case_tampered_signature(label: &'static str, message: &[u8]) -> MlDsaCase {
+pub fn case_tampered_signature(label: impl Into<String>, message: &[u8]) -> MlDsaCase {
     let mut case = valid_case(label, message);
     let last = case.sig_bytes.len() - 1;
     case.sig_bytes[last] ^= 0x01;
@@ -73,7 +73,7 @@ pub fn case_tampered_signature(label: &'static str, message: &[u8]) -> MlDsaCase
 }
 
 /// Caso negativo: assinatura genuína, mas a mensagem verificada é outra.
-pub fn case_wrong_message(label: &'static str, signed: &[u8], claimed: &[u8]) -> MlDsaCase {
+pub fn case_wrong_message(label: impl Into<String>, signed: &[u8], claimed: &[u8]) -> MlDsaCase {
     let mut case = valid_case(label, signed);
     case.message = claimed.to_vec();
     case.expected_valid = false;
@@ -81,7 +81,7 @@ pub fn case_wrong_message(label: &'static str, signed: &[u8], claimed: &[u8]) ->
 }
 
 /// Caso negativo: assinatura genuína, mas verificada contra uma chave pública diferente.
-pub fn case_wrong_pubkey(label: &'static str, message: &[u8]) -> MlDsaCase {
+pub fn case_wrong_pubkey(label: impl Into<String>, message: &[u8]) -> MlDsaCase {
     let mut case = valid_case(label, message);
     let (other_pk, _) = ml_dsa_44::KG::try_keygen().expect("keygen ML-DSA-44 falhou");
     case.pk_bytes = other_pk.into_bytes().to_vec();
@@ -89,8 +89,21 @@ pub fn case_wrong_pubkey(label: &'static str, message: &[u8]) -> MlDsaCase {
     case
 }
 
+/// Gera k pares válidos independentes, com chave e mensagem distintas por
+/// índice. Simula k contas diferentes assinando k transações diferentes,
+/// o cenário de uso real de agregação.
+pub fn valid_batch(label_prefix: &str, k: usize) -> Vec<MlDsaCase> {
+    (0..k)
+        .map(|i| {
+            let message = format!("{label_prefix}-msg-{i}");
+            valid_case(format!("{label_prefix}-{i}"), message.as_bytes())
+        })
+        .collect()
+}
+
 pub struct ProveOutcome {
-    /// `Ok` só quando prove() E verify() sucedem — ver nota de API acima (D2).
+    /// `Ok` só quando prove() e verify() sucedem para todo o lote (ver
+    /// comentário no início do arquivo).
     pub result: Result<SP1ProofWithPublicValues, String>,
     pub proving_time: Duration,
 }
@@ -106,19 +119,29 @@ pub fn verifying_key(proving_key: &EnvProvingKey) -> &SP1VerifyingKey {
     proving_key.verifying_key()
 }
 
-/// Roda um caso pelo guest program: gera a prova (modo compressed, D1) e a
-/// verifica. Só retorna `Ok` se ambas as etapas sucederem — ver a nota de
-/// API no topo do arquivo sobre por que a rejeição acontece em `verify`,
-/// não em `prove`.
+/// Escreve o lote no stdin do guest: `k` (u32) seguido de k triplos
+/// (pubkey, mensagem, assinatura). k=1 (slice de um elemento) é o formato
+/// usado pelo M1.
+fn write_batch(stdin: &mut SP1Stdin, cases: &[MlDsaCase]) {
+    stdin.write(&(cases.len() as u32));
+    for case in cases {
+        stdin.write_vec(case.pk_bytes.clone());
+        stdin.write_vec(case.message.clone());
+        stdin.write_vec(case.sig_bytes.clone());
+    }
+}
+
+/// Roda um lote de k casos pelo guest program (k=1 é o cenário do M1): gera
+/// a prova em modo compressed e a verifica. Só retorna `Ok` se ambas as
+/// etapas sucederem para todo o lote (a rejeição acontece em `verify`, não
+/// em `prove`; ver comentário no início do arquivo).
 pub fn prove_case(
     client: &EnvProver,
     proving_key: &EnvProvingKey,
-    case: &MlDsaCase,
+    cases: &[MlDsaCase],
 ) -> ProveOutcome {
     let mut stdin = SP1Stdin::new();
-    stdin.write_vec(case.pk_bytes.clone());
-    stdin.write_vec(case.message.clone());
-    stdin.write_vec(case.sig_bytes.clone());
+    write_batch(&mut stdin, cases);
 
     let start = Instant::now();
     let result = client
@@ -137,27 +160,28 @@ pub fn prove_case(
     ProveOutcome { result, proving_time }
 }
 
-/// Uma amostra do harness de benchmark do M2: proving e verificação medidos
-/// separadamente (diferente de `ProveOutcome::proving_time`, que no M1 mede
-/// os dois juntos), mais o tamanho da prova serializada em bytes.
+/// Uma amostra do harness de benchmark do M2/M3: proving e verificação
+/// medidos separadamente (diferente de `ProveOutcome::proving_time`, que
+/// mede os dois juntos), mais o tamanho da prova serializada em bytes.
 pub struct BenchSample {
     pub proving_time: Duration,
     pub verification_time: Duration,
-    /// Serialização via bincode — o mesmo formato usado por `SP1ProofWithPublicValues::save`.
+    /// Serialização via bincode (o mesmo formato usado por `SP1ProofWithPublicValues::save`).
     pub proof_size_bytes: usize,
 }
 
-/// Como `prove_case`, mas para o M2 (spec, Seção 4): mede proving e
-/// verificação em etapas separadas e reporta o tamanho da prova.
+/// Como `prove_case`, mas para os harnesses de benchmark (M2 para k=1, M3
+/// para k>1): mede proving e verificação em etapas separadas e reporta o
+/// tamanho da prova. `cases` deve conter só casos válidos, já que o
+/// benchmark caracteriza o caminho normal, não rejeição (rejeição é coberta
+/// pelos testes automatizados do M1).
 pub fn bench_case(
     client: &EnvProver,
     proving_key: &EnvProvingKey,
-    case: &MlDsaCase,
+    cases: &[MlDsaCase],
 ) -> Result<BenchSample, String> {
     let mut stdin = SP1Stdin::new();
-    stdin.write_vec(case.pk_bytes.clone());
-    stdin.write_vec(case.message.clone());
-    stdin.write_vec(case.sig_bytes.clone());
+    write_batch(&mut stdin, cases);
 
     let prove_start = Instant::now();
     let proof = client.prove(proving_key, stdin).compressed().run().map_err(|e| e.to_string())?;

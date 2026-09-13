@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 sp1-zkvm = "6"
 # default-rng desligado: o guest só verifica (não faz keygen/sign), não precisa de RNG.
-# só a variante ml-dsa-44 é compilada, ver docs/decisions.md (D1, D2).
+# Só a variante ml-dsa-44 é compilada.
 fips204 = { version = "0.4.6", default-features = false, features = ["ml-dsa-44"] }
 
 [[bin]]
@@ -16,6 +16,7 @@ path = "src/main.rs"
 [profile.release]
 lto = true
 
-# Detacha este crate do workspace do host — compila para riscv32im com toolchain
-# própria (instalada via `sp1up` / `cargo prove build`), não com o toolchain padrão.
+# Detacha este crate do workspace do host. Compila para riscv32im com
+# toolchain própria (instalada via `sp1up` / `cargo prove build`), não com o
+# toolchain padrão.
 [workspace]

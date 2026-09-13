@@ -2,6 +2,9 @@
 name = "verify-mldsa-host"
 version = "0.1.0"
 edition = "2021"
+# Há 3 binários (src/main.rs, src/bin/bench.rs, src/bin/bench_m3.rs). Isso
+# fixa qual roda com `cargo run` sem --bin, mantendo o comando do M1 no README.
+default-run = "verify-mldsa-host"
 
 [dependencies]
 sp1-sdk = { version = "6", features = ["blocking"] }

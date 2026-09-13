@@ -1,0 +1,6 @@
+k,repeticao,proving_time_ms,verification_time_ms,proof_size_bytes,processo
+4,1,155790,28.47,1277873,mesmo_processo_N10
+4,2,192470,33.00,1277873,mesmo_processo_N10
+4,3,164928.34,29.37,1277873,processo_fresco
+4,4,142006.43,28.56,1277873,processo_fresco
+4,5,166711.31,31.37,1277873,processo_fresco

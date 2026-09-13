@@ -1,19 +1,19 @@
-//! Harness de benchmark do M2 (spec, Seção 4).
+//! Harness de benchmark do M2.
 //!
-//! N=30 repetições do MESMO par (chave, mensagem, assinatura) — fixo entre
-//! repetições de propósito, para isolar ruído de medição/sistema (scheduling,
-//! throttling térmico) da variância intrínseca entre inputs diferentes, que
-//! é um fenômeno distinto e fora de escopo aqui.
+//! N=30 repetições do mesmo par (chave, mensagem, assinatura), fixo entre
+//! repetições de propósito, para isolar ruído de medição/sistema
+//! (scheduling, throttling térmico) da variância intrínseca entre inputs
+//! diferentes, que é um fenômeno distinto e fora de escopo aqui.
 //!
 //! Mede proving e verificação separadamente (diferente do M1, que mede os
-//! dois juntos) e reporta o tamanho da prova serializada em bytes. Resultados
-//! por repetição em docs/results/m2_benchmark.csv; resumo (média, desvio
-//! padrão) impresso no fim.
+//! dois juntos) e reporta o tamanho da prova serializada em bytes.
+//! Resultados por repetição em docs/results/m2_benchmark.csv. Resumo
+//! (média, desvio padrão) impresso no fim.
 //!
-//! Hardware oficial deste benchmark: docs/decisions.md (D3).
+//! Hardware oficial deste benchmark: ver README.
 //!
 //! Rodar com: cargo run --release -p verify-mldsa-host --bin bench
-//! (N=30 x ~70s/repetição em modo compressed ≈ 35+ minutos)
+//! (N=30 vezes ~70s por repetição em modo compressed, cerca de 35 a 50 minutos)
 
 use std::fs::File;
 use std::io::Write;
@@ -37,8 +37,8 @@ fn main() {
     let client = EnvProver::new();
     let proving_key = setup(&client);
 
-    // Par fixo, gerado uma única vez — reusado em todas as repetições (ver
-    // docs/decisions.md, justificativa metodológica na D3 e no histórico do M2).
+    // Par fixo, gerado uma única vez e reusado em todas as repetições, para
+    // isolar ruído de medição/sistema da variância entre inputs diferentes.
     let case = valid_case("m2-bench", b"transacao de benchmark M2 - par fixo entre repeticoes");
 
     let results_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/results");
@@ -51,7 +51,7 @@ fn main() {
     let mut samples: Vec<BenchSample> = Vec::with_capacity(N_REPETITIONS);
 
     for i in 1..=N_REPETITIONS {
-        let sample = bench_case(&client, &proving_key, &case)
+        let sample = bench_case(&client, &proving_key, std::slice::from_ref(&case))
             .unwrap_or_else(|e| panic!("repetição {i} falhou: {e}"));
 
         writeln!(
