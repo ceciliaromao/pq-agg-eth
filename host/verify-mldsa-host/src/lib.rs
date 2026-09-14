@@ -128,7 +128,7 @@ pub fn verifying_key(proving_key: &EnvProvingKey) -> &SP1VerifyingKey {
 /// Escreve o lote no stdin do guest: `k` (u32) seguido de k triplos
 /// (pubkey, mensagem, assinatura). k=1 (slice de um elemento) é o formato
 /// usado pelo M1.
-fn write_batch(stdin: &mut SP1Stdin, cases: &[MlDsaCase]) {
+pub fn write_batch(stdin: &mut SP1Stdin, cases: &[MlDsaCase]) {
     stdin.write(&(cases.len() as u32));
     for case in cases {
         stdin.write_vec(case.pk_bytes.clone());

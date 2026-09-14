@@ -12,6 +12,13 @@ Cargo.lock
 *.bin
 
 # ============================================================
+# Foundry (M5) - dependências reinstaláveis via forge install, ver README
+# ============================================================
+/contracts/lib/
+/contracts/out/
+/contracts/cache/
+
+# ============================================================
 # Benchmark outputs grandes (versionar resumos, não dumps brutos)
 # ============================================================
 /bench/raw/

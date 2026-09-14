@@ -26,15 +26,22 @@ agregação SNARK), ainda inexistente para contas de usuário.
 ## Status
 
 🚧 Em desenvolvimento. M1 (verificação individual), M2 (harness de
-benchmark), M3 (agregação por lote) e M4 (composição recursiva)
-concluídos. Próximo: M5 (custo de gas on-chain).
+benchmark), M3 (agregação por lote), M4 (composição recursiva) e M5
+(custo de gas on-chain) concluídos.
 
 ## Decisões técnicas em vigor
 
 - **Modo de prova (M1-M4):** STARK "core"/"compressed" do SP1, sem wrapping
   para Groth16/PLONK sobre BN254. Preserva segurança pós-quântica de ponta a
-  ponta enquanto nenhum milestone exige verificação on-chain. Decisão
-  reaberta em M5.
+  ponta enquanto nenhum milestone exige verificação on-chain.
+- **Modo de prova (M5, verificação on-chain):** Groth16, com wrapping SNARK
+  pairing-based sobre BN254. Não existe verificador Solidity para provas
+  STARK "compressed" nativas, e implementar um verificador FRI em Solidity
+  está fora do escopo desta fase. Essa escolha abre mão da segurança
+  pós-quântica de ponta a ponta no último passo (o wrapping em si seria
+  quebrado por um adversário quântico capaz de resolver o logaritmo
+  discreto em curvas elípticas), uma limitação assumida conscientemente e
+  documentada aqui, não descoberta a posteriori.
 - **Referência ML-DSA:** crate Rust pura `no_std`-compatível (`fips204`), não
   `pqcrypto-dilithium` (inviável no target `riscv32im` do guest SP1 por usar
   FFI sobre C) nem implementação própria do zero.
@@ -54,8 +61,11 @@ concluídos. Próximo: M5 (custo de gas on-chain).
     src/bin/bench.rs            # harness de benchmark k=1 (M2)
     src/bin/bench_m3.rs         # harness de benchmark parametrizado por k (M3)
     src/bin/bench_m4.rs         # harness comparativo de composição recursiva (M4)
+    src/bin/bench_m5.rs         # gera fixtures Groth16 para o teste de gas (M5)
     tests/verify_mldsa.rs       # suite de testes do M1
-/contracts                      # Solidity (a partir de M5)
+/contracts                      # projeto Foundry (M5)
+  fixtures/                     # fixtures Groth16 geradas por bench_m5 (JSON)
+  test/GasBenchmark.t.sol       # mede o gas de verifyProof por valor de k
 /docs
   results/                      # CSVs de benchmark por milestone (M2+)
 ```
@@ -269,6 +279,73 @@ Resultados de uma única execução por valor de n, dado o custo de tempo
 M4: resultado comparativo documentado, neste caso favorável à composição
 recursiva como forma de contornar o limite de memória do M3, ao custo de
 mais tempo total de execução.
+
+## Milestone M5: custo de gas on-chain
+
+Estimativa do custo de verificação em ambiente EVM simulado (Foundry),
+para os mesmos valores de k avaliados no M3 (k=1, 2, 4). Ver a decisão de
+modo de prova acima: este milestone usa Groth16 em vez de STARK
+compressed, a única opção com verificador Solidity pronto no SP1.
+
+### Pré-requisitos adicionais
+
+- [Foundry](https://getfoundry.sh/) (`forge`, `anvil`, `cast`).
+- Go (`go build`), para compilar o wrapper Groth16 (gnark) localmente via
+  a feature `native-gnark` do `sp1-sdk`. Necessário porque a imagem Docker
+  oficial do SP1 para o wrapping Groth16 só publica build para amd64 e
+  falha em Apple Silicon (arm64).
+- Dependências do Foundry, instaladas uma vez:
+  ```bash
+  cd contracts
+  forge install foundry-rs/forge-std --no-git
+  forge install succinctlabs/sp1-contracts --no-git
+  ```
+
+### Como rodar
+
+```bash
+# Gera a fixture Groth16 para um valor de k (cada um demora de 6 a 8 minutos)
+cargo run --release -p verify-mldsa-host --bin bench_m5 -- 1
+cargo run --release -p verify-mldsa-host --bin bench_m5 -- 2
+cargo run --release -p verify-mldsa-host --bin bench_m5 -- 4
+
+# Mede o gas de verifyProof para cada fixture gerada
+cd contracts && forge test -vv
+```
+
+### Resultados (Apple M4, 16 GB RAM, 14/09/2026)
+
+| k | Tempo de proving Groth16 | Encoding on-chain | Gas de `verifyProof` |
+| --- | --- | --- | --- |
+| 1 | 374,82 s | 356 bytes | 235.308 |
+| 2 | 404,03 s | 356 bytes | 239.132 |
+| 4 | 455,96 s | 356 bytes | 246.893 |
+
+Fixtures em [`contracts/fixtures/`](contracts/fixtures/).
+
+### Achados
+
+O encoding on-chain da prova é exatamente 356 bytes para todo k testado,
+a propriedade central do Groth16: tamanho de prova constante,
+independente do que foi computado dentro do circuito. O custo de gas
+segue o mesmo padrão, crescendo muito pouco com k (k=1 para k=2: +1,6%;
+k=2 para k=4: +3,2%), consistente com o crescimento quase nulo do
+tamanho da prova já observado no M2, M3 e M4. O aumento residual vem do
+tamanho dos valores públicos (pubkey e mensagem de cada assinatura do
+lote, que crescem com k) e não do custo criptográfico da verificação em
+si, que é fixo.
+
+Comparado a Kiraz e Kardas (2026), que reportam entre 390 e 670 mil gas
+por verificação de migração de uma única conta, os números aqui (235 a
+247 mil gas para lotes de 1 a 4 assinaturas numa única prova) ficam
+abaixo mesmo do extremo inferior daquela faixa, apesar de cobrirem mais
+de uma assinatura por verificação. Critério de sucesso do M5 atendido:
+números de gas obtidos e comparáveis à literatura.
+
+O tempo de proving Groth16 (375 a 456 segundos) é maior que o modo
+compressed usado em M1-M4 para o mesmo k, porque inclui uma etapa
+adicional de wrapping (redução da prova STARK para uma prova SNARK sobre
+BN254) além da prova STARK de base.
 
 ## Licença
 

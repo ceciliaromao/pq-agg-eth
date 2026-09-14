@@ -2,17 +2,22 @@
 name = "verify-mldsa-host"
 version = "0.1.0"
 edition = "2021"
-# Há 3 binários (src/main.rs, src/bin/bench.rs, src/bin/bench_m3.rs). Isso
-# fixa qual roda com `cargo run` sem --bin, mantendo o comando do M1 no README.
+# Há vários binários em src/bin/ além de src/main.rs. Isso fixa qual roda
+# com `cargo run` sem --bin, mantendo o comando do M1 no README.
 default-run = "verify-mldsa-host"
 
 [dependencies]
-sp1-sdk = { version = "6", features = ["blocking"] }
+# native-gnark: compila o wrapper Groth16 (gnark) via Go local em vez de
+# depender da imagem Docker oficial do SP1, que só tem build para amd64
+# (falha em Apple Silicon).
+sp1-sdk = { version = "6", features = ["blocking", "native-gnark"] }
 # defaults do fips204 (default-rng + todas as variantes) ficam ligados aqui:
 # o host roda nativamente e precisa gerar chaves/assinar para montar os casos de teste.
 fips204 = "0.4.6"
 # mesma versão usada internamente por sp1-sdk para (de)serializar SP1ProofWithPublicValues
 bincode = "1.3"
+# encoding hex das fixtures Groth16 consumidas pelo teste de gas em Solidity (M5)
+hex = "0.4"
 
 [build-dependencies]
 sp1-build = "6"

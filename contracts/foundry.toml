@@ -1,0 +1,13 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+test = "test"
+fs_permissions = [{ access = "read", path = "fixtures" }]
+
+remappings = [
+    "forge-std/=lib/forge-std/src/",
+    "sp1-contracts/=lib/sp1-contracts/contracts/src/",
+]
+
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
