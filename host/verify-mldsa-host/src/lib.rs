@@ -238,16 +238,11 @@ pub fn setup_aggregate(client: &EnvProver) -> EnvProvingKey {
     client.setup(AGGREGATE_ELF).expect("setup do guest program aggregate-mldsa falhou")
 }
 
-/// Compõe n sub-provas já geradas numa única prova recursiva: para cada
-/// sub-prova, escreve o digest da sua verifying key e seus valores
-/// públicos brutos no stdin normal, e a prova em si via
-/// `SP1Stdin::write_proof` (consumida pela syscall de verificação
-/// recursiva dentro do guest agregador, na mesma ordem).
-pub fn aggregate(
-    client: &EnvProver,
-    aggregate_proving_key: &EnvProvingKey,
-    sub_proofs: Vec<SubProof>,
-) -> ProveOutcome {
+/// Monta o stdin do guest agregador a partir de n sub-provas: escreve o
+/// digest da verifying key e os valores públicos brutos de cada uma no
+/// stdin normal, e a prova em si via `SP1Stdin::write_proof` (consumida
+/// pela syscall de verificação recursiva dentro do guest, na mesma ordem).
+fn build_aggregate_stdin(sub_proofs: Vec<SubProof>) -> SP1Stdin {
     let mut stdin = SP1Stdin::new();
     stdin.write(&(sub_proofs.len() as u32));
     for sub in &sub_proofs {
@@ -260,11 +255,48 @@ pub fn aggregate(
         };
         stdin.write_proof(*recursion_proof, sub.vk.vk.clone());
     }
+    stdin
+}
+
+/// Compõe n sub-provas já geradas numa única prova recursiva, em modo
+/// compressed (M4).
+pub fn aggregate(
+    client: &EnvProver,
+    aggregate_proving_key: &EnvProvingKey,
+    sub_proofs: Vec<SubProof>,
+) -> ProveOutcome {
+    let stdin = build_aggregate_stdin(sub_proofs);
 
     let start = Instant::now();
     let result = client
         .prove(aggregate_proving_key, stdin)
         .compressed()
+        .run()
+        .map_err(|e| e.to_string())
+        .and_then(|proof| {
+            client
+                .verify(&proof, aggregate_proving_key.verifying_key(), None)
+                .map(|()| proof)
+                .map_err(|e| e.to_string())
+        });
+    let proving_time = start.elapsed();
+
+    ProveOutcome { result, proving_time }
+}
+
+/// Como `aggregate`, mas em modo Groth16 (M5): compõe n sub-provas numa
+/// única prova recursiva já no formato aceito por um verificador on-chain.
+pub fn aggregate_groth16(
+    client: &EnvProver,
+    aggregate_proving_key: &EnvProvingKey,
+    sub_proofs: Vec<SubProof>,
+) -> ProveOutcome {
+    let stdin = build_aggregate_stdin(sub_proofs);
+
+    let start = Instant::now();
+    let result = client
+        .prove(aggregate_proving_key, stdin)
+        .groth16()
         .run()
         .map_err(|e| e.to_string())
         .and_then(|proof| {

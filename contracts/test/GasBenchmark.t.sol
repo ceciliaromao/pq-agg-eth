@@ -5,12 +5,16 @@ import {Test, console} from "forge-std/Test.sol";
 import {SP1Verifier} from "sp1-contracts/v6.1.0/SP1VerifierGroth16.sol";
 
 /// Mede o custo de gas de `SP1Verifier.verifyProof` para as provas Groth16
-/// geradas pelo host (host/verify-mldsa-host/src/bin/bench_m5.rs), nos
-/// mesmos valores de k avaliados no M3.
+/// geradas pelo host (M5).
 ///
-/// As fixtures em fixtures/groth16_k<k>.json precisam existir antes de
-/// rodar este teste (gerar com `cargo run -p verify-mldsa-host --bin
-/// bench_m5 -- <k>`).
+/// Casos de batching monolítico (host/verify-mldsa-host/src/bin/bench_m5.rs),
+/// para os mesmos valores de k avaliados no M3: fixtures/groth16_k<k>.json.
+///
+/// Casos de composição recursiva (bin/bench_m5_agg.rs), para os valores de
+/// n que o batching monolítico não alcançou no M3 (n=8, 16, 32, ver M4):
+/// fixtures/groth16_agg_n<n>.json.
+///
+/// As fixtures precisam existir antes de rodar este teste.
 contract GasBenchmarkTest is Test {
     SP1Verifier internal verifier;
 
@@ -18,8 +22,8 @@ contract GasBenchmarkTest is Test {
         verifier = new SP1Verifier();
     }
 
-    function _runFixture(uint256 k) internal {
-        string memory path = string.concat("fixtures/groth16_k", vm.toString(k), ".json");
+    function _runFixture(string memory filename, string memory label, uint256 value) internal {
+        string memory path = string.concat("fixtures/", filename);
         string memory json = vm.readFile(path);
 
         bytes32 vkey = vm.parseJsonBytes32(json, ".vkey");
@@ -30,18 +34,30 @@ contract GasBenchmarkTest is Test {
         verifier.verifyProof(vkey, publicValues, proof);
         uint256 gasUsed = gasBefore - gasleft();
 
-        console.log("k =", k, "gas =", gasUsed);
+        console.log(label, value, "gas =", gasUsed);
     }
 
     function test_GasK1() public {
-        _runFixture(1);
+        _runFixture("groth16_k1.json", "k =", 1);
     }
 
     function test_GasK2() public {
-        _runFixture(2);
+        _runFixture("groth16_k2.json", "k =", 2);
     }
 
     function test_GasK4() public {
-        _runFixture(4);
+        _runFixture("groth16_k4.json", "k =", 4);
+    }
+
+    function test_GasAggN8() public {
+        _runFixture("groth16_agg_n8.json", "n (agregado) =", 8);
+    }
+
+    function test_GasAggN16() public {
+        _runFixture("groth16_agg_n16.json", "n (agregado) =", 16);
+    }
+
+    function test_GasAggN32() public {
+        _runFixture("groth16_agg_n32.json", "n (agregado) =", 32);
     }
 }

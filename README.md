@@ -61,7 +61,8 @@ benchmark), M3 (agregação por lote), M4 (composição recursiva) e M5
     src/bin/bench.rs            # harness de benchmark k=1 (M2)
     src/bin/bench_m3.rs         # harness de benchmark parametrizado por k (M3)
     src/bin/bench_m4.rs         # harness comparativo de composição recursiva (M4)
-    src/bin/bench_m5.rs         # gera fixtures Groth16 para o teste de gas (M5)
+    src/bin/bench_m5.rs         # fixtures Groth16 de batching monolítico (M5)
+    src/bin/bench_m5_agg.rs     # fixtures Groth16 de composição recursiva (M5)
     tests/verify_mldsa.rs       # suite de testes do M1
 /contracts                      # projeto Foundry (M5)
   fixtures/                     # fixtures Groth16 geradas por bench_m5 (JSON)
@@ -309,6 +310,12 @@ cargo run --release -p verify-mldsa-host --bin bench_m5 -- 1
 cargo run --release -p verify-mldsa-host --bin bench_m5 -- 2
 cargo run --release -p verify-mldsa-host --bin bench_m5 -- 4
 
+# Extensão: Groth16 sobre a composição recursiva do M4, para n=8/16/32
+# (17 a 52 minutos cada, a maior parte gerando as n sub-provas)
+cargo run --release -p verify-mldsa-host --bin bench_m5_agg -- 8
+cargo run --release -p verify-mldsa-host --bin bench_m5_agg -- 16
+cargo run --release -p verify-mldsa-host --bin bench_m5_agg -- 32
+
 # Mede o gas de verifyProof para cada fixture gerada
 cd contracts && forge test -vv
 ```
@@ -346,6 +353,44 @@ O tempo de proving Groth16 (375 a 456 segundos) é maior que o modo
 compressed usado em M1-M4 para o mesmo k, porque inclui uma etapa
 adicional de wrapping (redução da prova STARK para uma prova SNARK sobre
 BN254) além da prova STARK de base.
+
+### Extensão: gas para composição recursiva (n=8, 16, 32)
+
+O batching monolítico do M3 não alcançou k=8 por falta de memória (ver
+M3). A composição recursiva do M4 alcançou n=32 sem esse problema, então
+faz sentido perguntar qual o custo de gas de verificar on-chain uma
+dessas provas agregadas. Reaproveitando `prove_sub_proofs` e o guest
+`aggregate-mldsa` do M4, `bench_m5_agg` gera as n sub-provas em modo
+compressed e envolve só a prova final da agregação em Groth16.
+
+| n (agregado) | Sub-provas + agregação | Encoding on-chain | Tamanho dos valores públicos | Gas de `verifyProof` |
+| --- | --- | --- | --- | --- |
+| 8 | 1.042,32 s | 356 bytes | 10.592 bytes | 262.401 |
+| 16 | 1.664,08 s | 356 bytes | 21.190 bytes | 293.928 |
+| 32 | 3.107,41 s | 356 bytes | 42.390 bytes | 358.077 |
+
+O encoding da prova continua fixo em 356 bytes, mas o gas cresce mais
+que nos casos de batching monolítico (k=4 para n=8: +6,3%; n=8 para
+n=16: +12,0%; n=16 para n=32: +21,8%). A causa não é a verificação
+criptográfica em si, que continua com custo fixo, e sim o tamanho dos
+valores públicos: o guest agregador repassa a chave pública e a
+mensagem de cada uma das n sub-provas como saída pública própria (ver
+M4), então esse blob cresce linearmente com n (cerca de 1.325 bytes por
+assinatura agregada). Descontando o custo fixo de 235.308 gas (o mesmo
+de k=1), o gas incremental por byte de valores públicos fica estável
+entre 2,9 e 3,0 gas/byte nos três valores de n testados, consistente
+com o custo de calldata e do hash SHA-256 dos valores públicos feito
+por `hashPublicValues` no verificador, não com o custo do emparelhamento
+Groth16.
+
+Isso aponta um limite prático do design atual, não da técnica de
+recursão em si. Repassar a chave pública e a mensagem de cada assinatura
+como valores públicos brutos é o motivo direto do crescimento linear de
+gas com n. Um próximo passo natural seria comprometer esses dados dentro
+do próprio circuito agregador (por exemplo, numa raiz de Merkle), em vez
+de expô-los diretamente, o que tornaria o custo de gas verdadeiramente
+constante em relação a n. Fica registrado aqui como observação para
+trabalho futuro, fora do escopo desta fase.
 
 ## Licença
 
