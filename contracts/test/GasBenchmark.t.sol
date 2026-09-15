@@ -14,6 +14,10 @@ import {SP1Verifier} from "sp1-contracts/v6.1.0/SP1VerifierGroth16.sol";
 /// n que o batching monolítico não alcançou no M3 (n=8, 16, 32, ver M4):
 /// fixtures/groth16_agg_n<n>.json.
 ///
+/// Casos de composição recursiva com raiz de Merkle em vez de valores
+/// públicos brutos (bin/bench_m5_merkle.rs), investigando se isso torna o
+/// gas constante em relação a n: fixtures/groth16_merkle_n<n>.json.
+///
 /// As fixtures precisam existir antes de rodar este teste.
 contract GasBenchmarkTest is Test {
     SP1Verifier internal verifier;
@@ -59,5 +63,13 @@ contract GasBenchmarkTest is Test {
 
     function test_GasAggN32() public {
         _runFixture("groth16_agg_n32.json", "n (agregado) =", 32);
+    }
+
+    function test_GasMerkleN8() public {
+        _runFixture("groth16_merkle_n8.json", "n (Merkle) =", 8);
+    }
+
+    function test_GasMerkleN32() public {
+        _runFixture("groth16_merkle_n32.json", "n (Merkle) =", 32);
     }
 }

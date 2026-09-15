@@ -35,6 +35,11 @@ pub const ELF: Elf = include_elf!("verify-mldsa");
 /// ELF do guest program `aggregate-mldsa` (M4), buildado pelo build.rs via sp1-build.
 pub const AGGREGATE_ELF: Elf = include_elf!("aggregate-mldsa");
 
+/// ELF do guest program `aggregate-mldsa-merkle` (extensão do M5): mesma
+/// verificação recursiva do aggregate-mldsa, mas comita só a raiz de
+/// Merkle das sub-provas em vez dos valores públicos brutos de cada uma.
+pub const AGGREGATE_MERKLE_ELF: Elf = include_elf!("aggregate-mldsa-merkle");
+
 /// Um caso de teste: chave pública, mensagem e assinatura, todos como bytes brutos
 /// (o formato que o guest espera via `sp1_zkvm::io::read_vec`).
 pub struct MlDsaCase {
@@ -236,6 +241,16 @@ pub fn prove_sub_proofs(client: &EnvProver, sub_proving_key: &EnvProvingKey, n: 
 /// Faz o setup do guest program agregador (M4).
 pub fn setup_aggregate(client: &EnvProver) -> EnvProvingKey {
     client.setup(AGGREGATE_ELF).expect("setup do guest program aggregate-mldsa falhou")
+}
+
+/// Faz o setup do guest program agregador com raiz de Merkle (extensão do
+/// M5). `aggregate_groth16` funciona com essa proving key sem alterações,
+/// já que o formato do stdin (n, digests e sub-provas) é idêntico ao do
+/// aggregate-mldsa: só a saída pública do guest muda.
+pub fn setup_aggregate_merkle(client: &EnvProver) -> EnvProvingKey {
+    client
+        .setup(AGGREGATE_MERKLE_ELF)
+        .expect("setup do guest program aggregate-mldsa-merkle falhou")
 }
 
 /// Monta o stdin do guest agregador a partir de n sub-provas: escreve o

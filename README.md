@@ -55,6 +55,7 @@ benchmark), M3 (agregação por lote), M4 (composição recursiva) e M5
 /circuits                       # guest programs SP1
   verify-mldsa/                 # M1+M3: verificação de k assinaturas ML-DSA-44 (k=1..N)
   aggregate-mldsa/              # M4: composição recursiva de n sub-provas
+  aggregate-mldsa-merkle/      # M5: variante com raiz de Merkle em vez de valores públicos brutos
 /host                           # host programs (geração/orquestração de provas)
   verify-mldsa-host/
     src/lib.rs                  # geração de casos/lotes + prove/verify + agregação (M1, M3, M4)
@@ -63,6 +64,7 @@ benchmark), M3 (agregação por lote), M4 (composição recursiva) e M5
     src/bin/bench_m4.rs         # harness comparativo de composição recursiva (M4)
     src/bin/bench_m5.rs         # fixtures Groth16 de batching monolítico (M5)
     src/bin/bench_m5_agg.rs     # fixtures Groth16 de composição recursiva (M5)
+    src/bin/bench_m5_merkle.rs  # fixtures Groth16 da variante com raiz de Merkle (M5)
     tests/verify_mldsa.rs       # suite de testes do M1
 /contracts                      # projeto Foundry (M5)
   fixtures/                     # fixtures Groth16 geradas por bench_m5 (JSON)
@@ -386,11 +388,53 @@ Groth16.
 Isso aponta um limite prático do design atual, não da técnica de
 recursão em si. Repassar a chave pública e a mensagem de cada assinatura
 como valores públicos brutos é o motivo direto do crescimento linear de
-gas com n. Um próximo passo natural seria comprometer esses dados dentro
-do próprio circuito agregador (por exemplo, numa raiz de Merkle), em vez
-de expô-los diretamente, o que tornaria o custo de gas verdadeiramente
-constante em relação a n. Fica registrado aqui como observação para
-trabalho futuro, fora do escopo desta fase.
+gas com n. A subseção seguinte testa uma alternativa a isso.
+
+### Extensão: raiz de Merkle em vez de valores públicos brutos
+
+O guest `aggregate-mldsa-merkle` (`circuits/aggregate-mldsa-merkle`)
+implementa a mesma verificação recursiva do `aggregate-mldsa`, mas em vez
+de repassar (pubkey, mensagem) de cada sub-prova como saída pública,
+calcula a raiz de uma árvore de Merkle binária (SHA-256) sobre o digest
+já verificado de cada sub-prova, e comita só a raiz (32 bytes, fixo
+independente de n). A raiz é recalculada dentro do próprio circuito a
+partir das sub-provas de fato verificadas, não recebida como entrada do
+host. Testado com n=8 e n=32 (dois pontos bastam para checar se o gas
+fica plano ou continua crescendo); assume n potência de 2, sem padding
+para folhas ímpares.
+
+```bash
+cargo run --release -p verify-mldsa-host --bin bench_m5_merkle -- 8
+cargo run --release -p verify-mldsa-host --bin bench_m5_merkle -- 32
+cd contracts && forge test -vv
+```
+
+**Resultados (Apple M4, 16 GB RAM, 15/09/2026):**
+
+| n | Sub-provas + agregação Groth16 | Encoding on-chain | Valores públicos | Gas de `verifyProof` |
+| --- | --- | --- | --- | --- |
+| 8 | 1.076,30 s | 356 bytes | 32 bytes | 231.609 |
+| 32 | 2.822,60 s | 356 bytes | 32 bytes | 231.609 |
+
+O gas é **idêntico** entre n=8 e n=32: 231.609 em ambos, confirmando a
+hipótese por completo. Também fica abaixo do próprio k=1 do batching
+monolítico (235.308), já que os valores públicos aqui (32 bytes) são
+menores que os de uma única assinatura crua (1.328 bytes). Isso isola
+exatamente o que se queria mostrar: o crescimento de gas observado na
+composição recursiva com valores públicos brutos não vem do custo
+criptográfico da verificação (que já era fixo desde o M2), vem
+inteiramente do tamanho dos dados expostos como saída pública, e é
+evitável com uma mudança de design no circuito agregador.
+
+Ressalva importante para a interpretação deste resultado: comprometer os
+dados numa raiz não elimina a necessidade de publicá-los em algum lugar
+para que qualquer consumidor saiba quais transações foram de fato
+autorizadas. Este experimento isola corretamente o custo de
+`verifyProof`, mas não representa o custo total de um sistema real
+usando esse esquema, que precisaria de disponibilidade de dados
+adicional (por exemplo, os dados brutos publicados como calldata à parte
+mais uma prova de inclusão de Merkle por transação, com seu próprio
+custo de gas) ou de outra hipótese de disponibilidade fora da cadeia.
 
 ## Licença
 
